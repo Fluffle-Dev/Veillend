@@ -5,6 +5,7 @@ import { AppConfig } from './app.config';
 import { IndexerConfig } from './indexer.config';
 import { AuthConfig } from './auth.config';
 import { AdminConfig } from './admin.config';
+import { NotificationsConfig } from './notifications.config';
 import { AppConfigService } from './app-config.service';
 import { Logger } from '@nestjs/common';
 
@@ -51,12 +52,17 @@ export function validateProductionJwtConfig(): void {
         const validatedIndexerConfig = validateConfig(config, IndexerConfig);
         const validatedAuthConfig = validateConfig(config, AuthConfig);
         const validatedAdminConfig = validateConfig(config, AdminConfig);
+        const validatedNotificationsConfig = validateConfig(
+          config,
+          NotificationsConfig,
+        );
 
         const mergedConfig = {
           ...validatedAppConfig,
           ...validatedIndexerConfig,
           ...validatedAuthConfig,
           ...validatedAdminConfig,
+          ...validatedNotificationsConfig,
         };
 
         validateProductionJwtConfig();

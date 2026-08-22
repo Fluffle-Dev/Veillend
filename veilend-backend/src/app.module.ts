@@ -16,6 +16,8 @@ import { TransactionsModule } from './transactions/transactions.module';
 import { AdminModule } from './admin/admin.module';
 import { AuthModule } from './auth/auth.module';
 import { ProtocolModule } from './protocol/protocol.module';
+import { UsersModule } from './users/users.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { ConfigModule } from './config/config.module';
 import { AppLoggerService } from './common/logging/app-logger.service';
 import { LoggingInterceptor } from './common/logging/logging.interceptor';
@@ -60,6 +62,8 @@ import {
     AdminModule,
     AuthModule,
     ProtocolModule,
+    UsersModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [
