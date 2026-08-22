@@ -10,16 +10,20 @@ datasource db {
 // ─── Auth ───────────────────────────────────────────────────────────────────
 
 model User {
-  id            String    @id @default(uuid())
-  walletAddress String    @unique
-  createdAt     DateTime  @default(now())
+  id            String   @id @default(uuid())
+  walletAddress String   @unique
+  createdAt     DateTime @default(now())
 
-  positions     Position[]
-  transactions  TransactionHistory[]
-  sessions      Session[]
-  refreshTokens RefreshToken[]
-  jtiRegistrations JtiRegistry[]
-  syncCheckpoints SyncCheckpoint[]
+  positions            Position[]
+  transactions         TransactionHistory[]
+  sessions             Session[]
+  refreshTokens        RefreshToken[]
+  jtiRegistrations     JtiRegistry[]
+  syncCheckpoints      SyncCheckpoint[]
+  pushTokens           PushToken[]
+  notifications        UserNotification[]
+  notificationSettings NotificationSettings?
+  e2eePublicKey        UserE2eePublicKey?
 }
 
 model WalletNonce {
@@ -35,16 +39,16 @@ model WalletNonce {
 // (see RefreshToken/JtiRegistry below); this row is what GET /auth/sessions
 // lists and what DELETE /auth/sessions[/:id] revokes.
 model Session {
-  id            String   @id @default(uuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  token         String   @unique // most recently issued access token (informational; new-format
-                                  // tokens are authorized via JtiRegistry, not this field)
-  expiresAt     DateTime          // expiry of `token` above
-  createdAt     DateTime @default(now())
-  lastSeenAt    DateTime @default(now())
-  userAgent     String?
-  ip            String?
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token      String   @unique // most recently issued access token (informational; new-format
+  // tokens are authorized via JtiRegistry, not this field)
+  expiresAt  DateTime // expiry of `token` above
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  userAgent  String?
+  ip         String?
 
   refreshTokens RefreshToken[]
   jtis          JtiRegistry[]
@@ -66,8 +70,8 @@ model RefreshToken {
   sessionId     String
   session       Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   tokenHash     String    @unique // SHA-256 of the opaque token; the raw token is never stored
-  jti           String              // jti of the access token minted alongside this refresh token
-  familyId      String              // rotation-chain identifier; all tokens in one chain share this
+  jti           String // jti of the access token minted alongside this refresh token
+  familyId      String // rotation-chain identifier; all tokens in one chain share this
   expiresAt     DateTime
   createdAt     DateTime  @default(now())
   lastRotatedAt DateTime  @default(now())
@@ -87,13 +91,13 @@ model RefreshToken {
 // a single access token — not just its parent session — can be revoked
 // immediately instead of waiting out its 15-minute TTL.
 model JtiRegistry {
-  jti         String    @id
-  userId      String
-  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  sessionId   String?
-  session     Session?  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  expiresAt   DateTime
-  revokedAt   DateTime?
+  jti       String    @id
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessionId String?
+  session   Session?  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  revokedAt DateTime?
 
   @@index([userId])
   @@index([sessionId])
@@ -104,23 +108,23 @@ model JtiRegistry {
 
 // Represents a Stellar Classic or Soroban token asset
 model Asset {
-  id            String   @id @default(uuid())
-  code          String                        // e.g. "USDC", "XLM"
-  issuer        String?                       // null for native XLM
-  contractId    String?  @unique              // Soroban token contract address
-  decimals      Int      @default(7)
-  symbol        String                        // display ticker
-  name          String
-  displayName   String?                       // human-friendly admin name
-  logoUrl       String?
-  isNative      Boolean  @default(false)
-  isSupported   Boolean  @default(false)     // set by the indexer's 'asset_configured' event
-  verified      Boolean  @default(false)
-  minCollateralRatio Float?                    // per-asset LTV (0–1); null uses protocol default
-  createdAt     DateTime @default(now())
+  id                 String   @id @default(uuid())
+  code               String // e.g. "USDC", "XLM"
+  issuer             String? // null for native XLM
+  contractId         String?  @unique // Soroban token contract address
+  decimals           Int      @default(7)
+  symbol             String // display ticker
+  name               String
+  displayName        String? // human-friendly admin name
+  logoUrl            String?
+  isNative           Boolean  @default(false)
+  isSupported        Boolean  @default(false) // set by the indexer's 'asset_configured' event
+  verified           Boolean  @default(false)
+  minCollateralRatio Float? // per-asset LTV (0–1); null uses protocol default
+  createdAt          DateTime @default(now())
 
-  positions     Position[]
-  transactions  TransactionHistory[]
+  positions    Position[]
+  transactions TransactionHistory[]
 
   @@unique([code, issuer])
   @@index([contractId])
@@ -130,35 +134,35 @@ model Asset {
 
 // A user's active lending/borrowing position in the VeilLend protocol
 model Position {
-  id                   String   @id @default(uuid())
-  userId               String
-  user                 User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  assetId              String
-  asset                Asset    @relation(fields: [assetId], references: [id])
+  id      String @id @default(uuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id])
 
   // Raw on-chain amounts in the asset's native precision
-  depositedRaw         BigInt   @default(0)   // collateral supplied
-  borrowedRaw          BigInt   @default(0)   // outstanding debt
-  accruedInterestRaw   BigInt   @default(0)
+  depositedRaw       BigInt @default(0) // collateral supplied
+  borrowedRaw        BigInt @default(0) // outstanding debt
+  accruedInterestRaw BigInt @default(0)
 
   // Derived USD values cached from last sync (7 decimal places)
-  depositedUsd         Decimal  @default(0) @db.Decimal(28, 7)
-  borrowedUsd          Decimal  @default(0) @db.Decimal(28, 7)
+  depositedUsd Decimal @default(0) @db.Decimal(28, 7)
+  borrowedUsd  Decimal @default(0) @db.Decimal(28, 7)
 
   // Risk metrics
-  collateralFactor     Decimal  @default(0) @db.Decimal(5, 4)   // 0.0000–1.0000
+  collateralFactor     Decimal  @default(0) @db.Decimal(5, 4) // 0.0000–1.0000
   liquidationThreshold Decimal  @default(0) @db.Decimal(5, 4)
-  healthFactor         Decimal? @db.Decimal(10, 4)              // null when no debt
+  healthFactor         Decimal? @db.Decimal(10, 4) // null when no debt
 
   // Privacy mode flag (balances hidden in UI but still tracked)
-  privacyMode          Boolean  @default(false)
+  privacyMode Boolean @default(false)
 
   // Sync metadata
-  lastSyncLedger       Int?                                      // Stellar ledger sequence
-  lastSyncAt           DateTime?
-  isStale              Boolean  @default(true)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  lastSyncLedger Int? // Stellar ledger sequence
+  lastSyncAt     DateTime?
+  isStale        Boolean   @default(true)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   @@unique([userId, assetId])
   @@index([userId])
@@ -183,31 +187,31 @@ enum TransactionStatus {
 }
 
 model TransactionHistory {
-  id              String            @id @default(uuid())
-  userId          String
-  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
-  assetId         String
-  asset           Asset             @relation(fields: [assetId], references: [id])
+  id      String @id @default(uuid())
+  userId  String
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assetId String
+  asset   Asset  @relation(fields: [assetId], references: [id])
 
-  type            TransactionType
-  status          TransactionStatus @default(PENDING)
+  type   TransactionType
+  status TransactionStatus @default(PENDING)
 
-  amountRaw       BigInt                            // in asset native precision
-  amountUsd       Decimal           @db.Decimal(28, 7)
+  amountRaw BigInt // in asset native precision
+  amountUsd Decimal @db.Decimal(28, 7)
 
   // Stellar identifiers
-  txHash          String?                           // Stellar transaction hash
-  eventIndex      Int?                              // Event index within transaction
-  ledgerSequence  Int?                              // ledger it was included in
-  operationId     String?                           // Stellar operation ID
+  txHash         String? // Stellar transaction hash
+  eventIndex     Int? // Event index within transaction
+  ledgerSequence Int? // ledger it was included in
+  operationId    String? // Stellar operation ID
 
   // Soroban-specific
-  contractId      String?                           // contract that emitted the event
-  sorobanEventId  String?           @unique         // Soroban event id; the true per-event idempotency key (a txHash can contain multiple events)
+  contractId     String? // contract that emitted the event
+  sorobanEventId String? @unique // Soroban event id; the true per-event idempotency key (a txHash can contain multiple events)
 
-  memo            String?
-  createdAt       DateTime          @default(now())
-  confirmedAt     DateTime?
+  memo        String?
+  createdAt   DateTime  @default(now())
+  confirmedAt DateTime?
 
   @@unique([txHash, eventIndex])
   @@index([userId, createdAt])
@@ -221,29 +225,29 @@ model TransactionHistory {
 
 // Tracks the last successfully processed ledger per user for incremental sync
 model SyncCheckpoint {
-  id              String   @id @default(uuid())
-  userId          String
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   // The Stellar ledger sequence number we've synced up to
-  lastLedger      Int      @default(0)
-  lastLedgerAt    DateTime?
+  lastLedger   Int       @default(0)
+  lastLedgerAt DateTime?
 
   // Soroban event cursor for resumable event streaming
-  eventCursor     String?
+  eventCursor String?
 
-  syncStatus      String   @default("idle")  // idle | running | error
-  lastError       String?
-  updatedAt       DateTime @updatedAt
+  syncStatus String   @default("idle") // idle | running | error
+  lastError  String?
+  updatedAt  DateTime @updatedAt
 
   @@unique([userId])
   @@index([userId])
 }
 
 model Admin {
-  id             String   @id @default(uuid())
-  walletAddress  String   @unique
-  createdAt      DateTime @default(now())
+  id            String   @id @default(uuid())
+  walletAddress String   @unique
+  createdAt     DateTime @default(now())
 
   @@index([walletAddress])
 }
@@ -260,12 +264,12 @@ enum AdminActionType {
 }
 
 model AdminAuditLog {
-  id            String          @id @default(uuid())
-  actorWallet   String                          // wallet address of the admin who performed the action
-  action        AdminActionType
-  target        String?                         // the target of the action (e.g., wallet address, asset ID)
-  payload       Json?                           // additional data about the action
-  createdAt     DateTime        @default(now())
+  id          String          @id @default(uuid())
+  actorWallet String // wallet address of the admin who performed the action
+  action      AdminActionType
+  target      String? // the target of the action (e.g., wallet address, asset ID)
+  payload     Json? // additional data about the action
+  createdAt   DateTime        @default(now())
 
   @@index([actorWallet])
   @@index([action])
@@ -288,17 +292,17 @@ enum AdminActionStatus {
 // signs with Freighter and submits itself. The AdminActionWatcher flips the
 // status based on the on-chain outcome of the reported txHash.
 model AdminAction {
-  id            String            @id @default(cuid())
-  adminAddress  String
-  action        AdminActionType
-  payload       Json
-  xdr           String            @default("")
-  status        AdminActionStatus @default(PENDING)
-  txHash        String?           @unique
-  error         String?
-  submittedAt   DateTime?
-  confirmedAt   DateTime?
-  createdAt     DateTime          @default(now())
+  id           String            @id @default(cuid())
+  adminAddress String
+  action       AdminActionType
+  payload      Json
+  xdr          String            @default("")
+  status       AdminActionStatus @default(PENDING)
+  txHash       String?           @unique
+  error        String?
+  submittedAt  DateTime?
+  confirmedAt  DateTime?
+  createdAt    DateTime          @default(now())
 
   @@index([adminAddress])
   @@index([action])
@@ -359,3 +363,82 @@ model IndexerEventDedup {
   @@index([txHash, eventIndex])
 }
 
+// ─── Push Notifications ──────────────────────────────────────────────────────
+
+enum Platform {
+  IOS
+  ANDROID
+}
+
+enum NotificationKind {
+  LIQUIDATION_RISK
+  LIQUIDATION_OPPORTUNITY
+  ONBOARDING
+  IDLE_LOCK
+  GENERAL_ANNOUNCEMENT
+  MARKETING
+  SECURITY_ALERT
+}
+
+// One row per registered device. `token` is globally unique (Expo push
+// tokens are device-scoped); re-registering the same token reassigns it to
+// whichever user is currently signed in on that device.
+model PushToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  Platform
+  locale    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+// Per-user notification channel preferences. Singleton row (userId is the
+// PK), created lazily on first read/write. `lastLiquidationPushAt` backs the
+// 1-push-per-hour liquidation cooldown so a health factor oscillating around
+// the risk threshold doesn't spam the user.
+model NotificationSettings {
+  userId                 String    @id
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  liquidationRisk        Boolean   @default(true)
+  liquidationOpportunity Boolean   @default(true)
+  generalAnnouncements   Boolean   @default(true)
+  marketing              Boolean   @default(false)
+  security               Boolean   @default(true)
+  lastLiquidationPushAt  DateTime?
+  updatedAt              DateTime  @updatedAt
+}
+
+// In-app notification history. Written unconditionally for every notify
+// attempt regardless of whether a push was actually sent (channel disabled,
+// rate-limited, no device token, etc.), so the in-app inbox is always
+// complete. `payload` holds the plaintext title/body/data — this is our own
+// database, not a 3rd-party push service, so no E2EE is needed here.
+model UserNotification {
+  id              String           @id @default(uuid())
+  userId          String
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind            NotificationKind
+  payload         Json
+  readAt          DateTime?
+  pushDeliveredAt DateTime?
+  createdAt       DateTime         @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// The user's Curve25519 public key (nacl.box), set from the mobile app,
+// which holds the matching private key in SecureStore. Sensitive push kinds
+// (liquidation risk/opportunity) are encrypted to this key before being
+// handed to Expo, so the push payload observed by Expo/Apple/Google never
+// contains plaintext balances or health factors.
+model UserE2eePublicKey {
+  userId    String   @id
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publicKey String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

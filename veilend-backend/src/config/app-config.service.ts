@@ -111,4 +111,12 @@ export class AppConfigService {
       ),
     };
   }
+
+  get notifications(): {
+    expoAccessToken?: string;
+  } {
+    return {
+      expoAccessToken: this.configService.get<string>('EXPO_ACCESS_TOKEN'),
+    };
+  }
 }
