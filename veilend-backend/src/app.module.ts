@@ -18,6 +18,8 @@ import { AuthModule } from './auth/auth.module';
 import { ProtocolModule } from './protocol/protocol.module';
 import { UsersModule } from './users/users.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { DepositsModule } from './deposits/deposits.module';
+import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 import { ConfigModule } from './config/config.module';
 import { AppLoggerService } from './common/logging/app-logger.service';
 import { LoggingInterceptor } from './common/logging/logging.interceptor';
@@ -64,6 +66,8 @@ import {
     ProtocolModule,
     UsersModule,
     NotificationsModule,
+    DepositsModule,
+    WithdrawalsModule,
   ],
   controllers: [AppController],
   providers: [

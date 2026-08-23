@@ -24,6 +24,9 @@ model User {
   notifications        UserNotification[]
   notificationSettings NotificationSettings?
   e2eePublicKey        UserE2eePublicKey?
+  deposits             UserDeposit[]
+  withdrawals          WithdrawalRequest[]
+  addressWhitelist     AddressWhitelist[]
 }
 
 model WalletNonce {
@@ -123,8 +126,11 @@ model Asset {
   minCollateralRatio Float? // per-asset LTV (0–1); null uses protocol default
   createdAt          DateTime @default(now())
 
-  positions    Position[]
-  transactions TransactionHistory[]
+  positions            Position[]
+  transactions         TransactionHistory[]
+  deposits             UserDeposit[]
+  withdrawals          WithdrawalRequest[]
+  withdrawalConfig     AssetWithdrawalConfig?
 
   @@unique([code, issuer])
   @@index([contractId])
@@ -441,4 +447,147 @@ model UserE2eePublicKey {
   publicKey String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+// ─── Deposit Safety Rails ────────────────────────────────────────────────────
+
+enum DepositStatus {
+  PENDING
+  CONFIRMED
+  ORPHANED
+}
+
+// Tracks inbound on-chain token transfers a user has made, waiting for ledger
+// confirmations before crediting the off-chain balance. Prevents double-spend
+// via race by requiring minConfirmations before marking CONFIRMED.
+model UserDeposit {
+  id                     String        @id @default(uuid())
+  userWallet             String
+  userId                 String
+  user                   User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assetId                String
+  asset                  Asset         @relation(fields: [assetId], references: [id])
+  amountStroops          BigInt
+  txHash                 String        @unique
+  ledgerSeq              Int
+  confirmationsRequired  Int           @default(5)
+  confirmationsSeen      Int           @default(0)
+  status                 DepositStatus @default(PENDING)
+  createdAt              DateTime      @default(now())
+  creditedAt             DateTime?
+
+  @@index([userWallet])
+  @@index([userId])
+  @@index([assetId])
+  @@index([status])
+  @@index([txHash])
+  @@index([ledgerSeq])
+  @@index([createdAt])
+}
+
+// ─── Withdrawal Safety Rails ─────────────────────────────────────────────────
+
+enum WithdrawalStatus {
+  DRAFT
+  SIGNED
+  SENT
+  CONFIRMED
+  REJECTED
+  CANCELLED
+  ORPHANED
+}
+
+// A user-initiated withdrawal request. Flows through: DRAFT → SIGNED →
+// SENT → CONFIRMED (or REJECTED/ORPHANED on failure). The backend builds
+// the XDR and asks the user to sign with their wallet. After submission,
+// the watcher waits for Stellar ledger confirmations before marking complete.
+model WithdrawalRequest {
+  id                     String           @id @default(uuid())
+  userWallet             String
+  userId                 String
+  user                   User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  assetId                String
+  asset                  Asset            @relation(fields: [assetId], references: [id])
+  amountStroops          BigInt
+  destinationAddress     String
+  destinationTag         String?
+  whitelistApproved      Boolean          @default(false)
+  whitelistEntryAddedAt  DateTime?
+  timelockUntil          DateTime?
+  status                 WithdrawalStatus @default(DRAFT)
+  xdr                    String           @default("")
+  txHash                 String?          @unique
+  feeChargedStroops      BigInt?
+  confirmationsRequired  Int              @default(5)
+  confirmationsSeen      Int              @default(0)
+  error                  String?
+  createdAt              DateTime         @default(now())
+  signedAt               DateTime?
+  submittedAt            DateTime?
+  confirmedAt            DateTime?
+
+  nonces                 WithdrawNonce[]
+
+  @@index([userWallet])
+  @@index([userId])
+  @@index([assetId])
+  @@index([status])
+  @@index([txHash])
+  @@index([createdAt])
+}
+
+// ─── Withdrawal Nonce (replay guard) ─────────────────────────────────────────
+
+// Every WithdrawalRequest has a UNIQUE WithdrawNonce embedded as a memo+hash.
+// If the same signed payload is replayed, the backend rejects because the
+// nonce is already used. Matches the B20 admin idempotency pattern.
+model WithdrawNonce {
+  id                String   @id @default(uuid())
+  nonce             String   @unique // SHA-256 hash of the memo embedded in the XDR
+  withdrawalRequestId String  @unique
+  withdrawalRequest WithdrawalRequest @relation(fields: [withdrawalRequestId], references: [id], onDelete: Cascade)
+  used              Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  @@index([nonce])
+  @@index([used])
+}
+
+// ─── Address Whitelist ───────────────────────────────────────────────────────
+
+// User's whitelisted withdrawal addresses. Adding a new address always has a
+// 24-hour timelock UNLESS the user has pre-set "instant whitelist mode for
+// <= $50" and the amount fits the limit. On any add, a push/email alert is sent.
+model AddressWhitelist {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  address          String
+  label            String?
+  timelockUntil    DateTime? // null means no pending timelock (already active)
+  isInstantApproved Boolean @default(false) // true if whitelisted with instant mode
+  instantLimitUsd  Decimal? @db.Decimal(10, 2) // max USD for instant whitelist
+  createdAt        DateTime @default(now())
+  activatedAt      DateTime?
+
+  @@unique([userId, address])
+  @@index([userId])
+  @@index([address])
+}
+
+// ─── Asset Withdrawal Config ─────────────────────────────────────────────────
+
+// Per-asset withdrawal configuration: minConfirmations, etc.
+// Native XLM (low-confidence) can require higher confirmations; USDC (stable)
+// can use lower.
+model AssetWithdrawalConfig {
+  id                String   @id @default(uuid())
+  assetId           String   @unique
+  asset             Asset    @relation(fields: [assetId], references: [id])
+  minConfirmations  Int      @default(5)
+  isEnabled         Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([assetId])
 }

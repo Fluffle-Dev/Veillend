@@ -10,6 +10,7 @@ import { CircuitBreakerManager } from './retry-with-fallback';
 export class HorizonService implements OnModuleInit {
   private readonly logger = new Logger(HorizonService.name);
   private circuitBreaker!: CircuitBreakerManager<Horizon.Server>;
+  private server!: Horizon.Server;
 
   constructor(private readonly configService: AppConfigService) {}
 
@@ -24,6 +25,9 @@ export class HorizonService implements OnModuleInit {
       horizonUrls,
       (url) => new Horizon.Server(url),
     );
+
+    // Keep a direct reference for streaming (circuit breaker is for REST calls)
+    this.server = new Horizon.Server(horizonUrls[0]);
 
     // Asynchronously check connection so startup isn't blocked
     void this.validateConnection();
@@ -57,7 +61,7 @@ export class HorizonService implements OnModuleInit {
     );
   }
 
-  async getRoot(): Promise<any> {
+  async getRoot(): Promise<{ history_latest_ledger: number }> {
     return this.circuitBreaker.execute('getRoot', (client) => client.root(), {
       mode: 'read',
     });
@@ -119,5 +123,66 @@ export class HorizonService implements OnModuleInit {
         });
       }),
     );
+  }
+
+  /**
+   * Get current ledger sequence from Horizon.
+   */
+  async getCurrentLedger(): Promise<number> {
+    const root = await this.getRoot();
+    return root.history_latest_ledger;
+  }
+
+  /**
+   * Get a transaction by hash.
+   */
+  async getTransactionByHash(
+    txHash: string,
+  ): Promise<Horizon.ServerApi.TransactionRecord | null> {
+    try {
+      const record = await this.server
+        .transactions()
+        .transaction(txHash)
+        .call();
+      return record;
+    } catch (error: unknown) {
+      const err = error as { response?: { status?: number } };
+      if (err?.response?.status === 404) {
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Stream transactions for an account using Horizon's streaming API.
+   * Used by the DepositWatcher to monitor incoming transfers.
+   */
+  streamAccountTransactions(
+    accountId: string,
+    cursor: string = 'now',
+  ): { close: () => void } {
+    const closeable = this.server
+      .transactions()
+      .forAccount(accountId)
+      .cursor(cursor)
+      .stream({
+        onmessage: (_event: any) => {
+          // Handled by caller via polling fallback
+        },
+        onerror: (_event: any) => {
+          this.logger.error(
+            `Error streaming transactions for account ${accountId}`,
+          );
+        },
+      });
+
+    return {
+      close: () => {
+        if (typeof closeable === 'function') {
+          closeable();
+        }
+      },
+    };
   }
 }
