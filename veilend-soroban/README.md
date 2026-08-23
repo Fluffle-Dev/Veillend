@@ -142,11 +142,11 @@ Call `contract_metadata()` on a deployed contract before writing a migration or 
 
 | Metadata field | Current value | Meaning |
 | :--- | :--- | :--- |
-| `contract_version` | `4` | The public contract interface version. |
-| `storage_schema_version` | `3` | The version of serialized storage keys and values. |
-| `storage_schema_id` | `VLENDV3` | A compact, stable identifier for this storage layout. |
+| `contract_version` | `7` | The public contract interface version. |
+| `storage_schema_version` | `5` | The version of serialized storage keys and values. |
+| `storage_schema_id` | `VLENDV5` | A compact, stable identifier for this storage layout. |
 
-Schema `VLENDV3` uses these keys:
+Schema `VLENDV5` uses these keys:
 
 | Durability | Key | Value |
 | :--- | :--- | :--- |

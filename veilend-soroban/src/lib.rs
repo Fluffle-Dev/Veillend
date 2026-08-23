@@ -29,7 +29,7 @@ pub use flash_loan::{
 };
 
 /// Increment this only when a contract interface change requires consumers to adapt.
-pub const CONTRACT_VERSION: u32 = 6;
+pub const CONTRACT_VERSION: u32 = 7;
 
 /// Increment this only when the serialized `DataKey` or stored value layout changes.
 pub const STORAGE_SCHEMA_VERSION: u32 = 5;
@@ -3702,7 +3702,7 @@ mod tests {
     fn test_contract_metadata_identifies_current_storage_shape() {
         let metadata = VeilLendContract::contract_metadata(Env::default());
 
-        assert_eq!(metadata.contract_version, 6);
+        assert_eq!(metadata.contract_version, 7);
         assert_eq!(metadata.storage_schema_version, 5);
         assert_eq!(metadata.storage_schema_id, symbol_short!("VLENDV5"));
     }
