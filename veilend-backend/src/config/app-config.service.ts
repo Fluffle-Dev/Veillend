@@ -119,4 +119,58 @@ export class AppConfigService {
       expoAccessToken: this.configService.get<string>('EXPO_ACCESS_TOKEN'),
     };
   }
+
+  get deposits(): {
+    watcherPollIntervalMs: number;
+    defaultMinConfirmations: number;
+    assetConfirmations: Record<string, number>;
+  } {
+    let assetConfirmations: Record<string, number> = {};
+    try {
+      const val = this.configService.get<string>('DEPOSIT_ASSET_CONFIRMATIONS');
+      if (val) {
+        assetConfirmations = JSON.parse(val) as Record<string, number>;
+      }
+    } catch {
+      // Ignore
+    }
+
+    return {
+      watcherPollIntervalMs: this.configService.get<number>(
+        'DEPOSIT_WATCHER_POLL_INTERVAL_MS',
+        15000,
+      ),
+      defaultMinConfirmations: this.configService.get<number>(
+        'DEPOSIT_DEFAULT_MIN_CONFIRMATIONS',
+        5,
+      ),
+      assetConfirmations,
+    };
+  }
+
+  get withdrawals(): {
+    watcherPollIntervalMs: number;
+    defaultMinConfirmations: number;
+    timelockHours: number;
+    instantWhitelistMaxUsd: number;
+  } {
+    return {
+      watcherPollIntervalMs: this.configService.get<number>(
+        'WITHDRAWAL_WATCHER_POLL_INTERVAL_MS',
+        15000,
+      ),
+      defaultMinConfirmations: this.configService.get<number>(
+        'WITHDRAWAL_DEFAULT_MIN_CONFIRMATIONS',
+        10,
+      ),
+      timelockHours: this.configService.get<number>(
+        'WITHDRAWAL_TIMELOCK_HOURS',
+        24,
+      ),
+      instantWhitelistMaxUsd: this.configService.get<number>(
+        'WITHDRAWAL_INSTANT_WHITELIST_MAX_USD',
+        50,
+      ),
+    };
+  }
 }
