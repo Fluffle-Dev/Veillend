@@ -390,6 +390,8 @@ describeIfDb('Isolation / race-safety integration tests', () => {
       // Import here to avoid a circular module issue in the test harness.
       const { PortfoliosService } =
         await import('../src/portfolios/portfolios.service');
+      const { PortfoliosRepository } =
+        await import('../src/portfolios/portfolios.repository');
 
       const user = await rawPrisma.user.upsert({
         where: { walletAddress: 'portfolio-user' },
@@ -423,12 +425,26 @@ describeIfDb('Isolation / race-safety integration tests', () => {
       const rrSpy = jest.spyOn(prisma, 'withRepeatableRead');
       const serSpy = jest.spyOn(prisma, 'withSerializable');
 
-      const portfolioService = new PortfoliosService(prisma);
+      const stellarAccountServiceStub = {
+        lookupAccountHorizon: () =>
+          Promise.resolve({ success: true, data: { balances: [] } }),
+      };
+      const protocolServiceStub = {
+        getMinCollateralRatioBps: () => 12_500,
+      };
+
+      const portfoliosRepository = new PortfoliosRepository(prisma);
+      const portfolioService = new PortfoliosService(
+        prisma,
+        portfoliosRepository,
+        stellarAccountServiceStub as any,
+        protocolServiceStub as any,
+      );
       const portfolio = await portfolioService.getPortfolio('portfolio-user');
 
       expect(rrSpy).toHaveBeenCalledTimes(1);
       expect(serSpy).not.toHaveBeenCalled();
-      expect(portfolio.positions).toHaveLength(1);
+      expect(portfolio.protocol.depositedAssets).toHaveLength(1);
 
       rrSpy.mockRestore();
       serSpy.mockRestore();

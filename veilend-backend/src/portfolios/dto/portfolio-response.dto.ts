@@ -1,37 +1,46 @@
-export class PositionSummaryDto {
+/** A single on-chain Horizon balance line (native XLM or a trustline). */
+export class BalanceDto {
+  /** 'XLM' for native, otherwise the trustline's asset code (e.g. 'USDC'). Kept for client compatibility. */
+  readonly asset: string;
+  readonly assetCode: string;
+  readonly issuer: string | null;
+  readonly balance: number;
+}
+
+export class ProtocolAssetPositionDto {
   readonly assetId: string;
   readonly assetCode: string;
   readonly assetSymbol: string;
-  /** Deposited (collateral) amount, formatted using the asset's decimals. */
-  readonly deposited: number;
-  /** Outstanding debt, formatted using the asset's decimals. */
-  readonly borrowed: number;
-  readonly depositedUsd: number;
-  readonly borrowedUsd: number;
-  readonly minCollateralRatio?: number | null;
-  readonly healthFactor: number | null;
-  readonly privacyMode: boolean;
-  readonly isStale: boolean;
+  readonly amount: number;
+  readonly amountUsd: number;
+}
+
+/** VeilLend protocol positions and solvency metrics, distinct from wallet `balances`. */
+export class ProtocolSummaryDto {
+  readonly depositedAssets: ProtocolAssetPositionDto[];
+  readonly borrowedAssets: ProtocolAssetPositionDto[];
+  readonly collateralValue: number;
+  readonly borrowedValue: number;
+  /** healthFactor = collateralValue × 10_000 / (borrowedValue × minCollateralRatioBps); Infinity when there is no debt. */
+  readonly healthFactor: number;
+  readonly availableToBorrow: number;
+  readonly minCollateralRatioBps: number;
 }
 
 export class PortfolioResponseDto {
   readonly walletAddress: string;
+  /** Native XLM balance; mirrors the 'XLM' entry in `balances` for client convenience. */
+  readonly balance: number;
+  /** Wallet's on-chain Horizon balances (native XLM + trustlines) — NOT protocol collateral/debt. */
+  readonly balances: BalanceDto[];
+  /** VeilLend protocol collateral/debt/health, computed from indexer Position rows. */
+  readonly protocol: ProtocolSummaryDto;
+  /** Mirrors `protocol.collateralValue`; kept at top level for existing clients. */
   readonly collateralValue: number;
+  /** Mirrors `protocol.borrowedValue`; kept at top level for existing clients. */
   readonly borrowedValue: number;
+  /** Mirrors `protocol.availableToBorrow`; kept at top level for existing clients. */
   readonly availableToBorrow: number;
-  /** Weighted collateral / sum(borrowed) across all positions; Infinity when there is no debt. Null if oracle prices are stale. */
-  readonly healthFactor: number | null;
-  /** Health factor excluding residual bad debt */
-  readonly hfExBadDebt?: number | null;
-  /** Health factor including residual bad debt */
-  readonly hfWithBadDebt?: number | null;
-  /** Accumulated residual bad debt post-liquidation in USD */
-  readonly badDebtUsd?: number;
-  /** Whether any position has a stale or missing oracle price */
-  readonly isStale?: boolean;
-  /** List of asset codes with stale prices */
-  readonly stalePrices?: string[];
-  /** List of asset codes with missing prices */
-  readonly missingPrices?: string[];
-  readonly positions: PositionSummaryDto[];
+  /** Mirrors `protocol.healthFactor`; kept at top level for existing clients. */
+  readonly healthFactor: number;
 }

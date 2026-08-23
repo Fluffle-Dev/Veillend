@@ -1,128 +1,167 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Horizon } from '@stellar/stellar-sdk';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prisma/client';
+import { StellarAccountService } from '../stellar/stellar-account.service';
+import { ProtocolService } from '../protocol/protocol.service';
 import { formatRawAmount } from '../common/utils/format-raw-amount';
-import { computeHealthFactor } from '../common/utils/health-factor.util';
+import { computeVeilLendHealth } from '../common/utils/veillend-health.util';
 import {
+  PortfoliosRepository,
+  PositionWithAsset,
+} from './portfolios.repository';
+import {
+  BalanceDto,
   PortfolioResponseDto,
-  PositionSummaryDto,
+  ProtocolAssetPositionDto,
 } from './dto/portfolio-response.dto';
+
+type HorizonBalance = Horizon.AccountResponse['balances'][number];
+
+/**
+ * Maps raw Horizon balance lines to our wire format. Liquidity-pool shares
+ * (no `asset_code`) are dropped — they aren't tradable/collateral-relevant
+ * wallet holdings for this view.
+ */
+function mapHorizonBalances(balances: HorizonBalance[]): BalanceDto[] {
+  const result: BalanceDto[] = [];
+  for (const b of balances) {
+    const balance = Number(b.balance);
+    if (!Number.isFinite(balance)) {
+      continue;
+    }
+    if (b.asset_type === 'native') {
+      result.push({ asset: 'XLM', assetCode: 'XLM', issuer: null, balance });
+      continue;
+    }
+    if ('asset_code' in b && typeof b.asset_code === 'string') {
+      const issuer =
+        'asset_issuer' in b && typeof b.asset_issuer === 'string'
+          ? b.asset_issuer
+          : null;
+      result.push({
+        asset: b.asset_code,
+        assetCode: b.asset_code,
+        issuer,
+        balance,
+      });
+    }
+  }
+  return result;
+}
+
+function toAssetPositionDto(
+  p: PositionWithAsset,
+  rawAmount: bigint,
+  usdAmount: Prisma.Decimal | number,
+): ProtocolAssetPositionDto {
+  return {
+    assetId: p.assetId,
+    assetCode: p.asset.code,
+    assetSymbol: p.asset.symbol,
+    amount: formatRawAmount(rawAmount, p.asset.decimals),
+    amountUsd: Number(usdAmount),
+  };
+}
 
 @Injectable()
 export class PortfoliosService {
   private readonly logger = new Logger(PortfoliosService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly portfoliosRepository: PortfoliosRepository,
+    private readonly stellarAccountService: StellarAccountService,
+    private readonly protocolService: ProtocolService,
+  ) {}
 
   /**
-   * Builds a portfolio snapshot from the indexer's Position table, rather
-   * than reading live Horizon balances. Positions are the source of truth
-   * for VeilLend protocol collateral/debt.
+   * Builds a combined portfolio view for a wallet:
+   *  - `balances`: live on-chain Horizon holdings (native XLM + trustlines).
+   *  - `protocol`: VeilLend collateral/debt/health, computed from the
+   *    indexer's `Position` rows — never from Horizon balances, and never
+   *    mixed into the `balances` figures.
    *
-   * Computes health factor using authoritative on-chain weighted MCR rules,
-   * flags stale oracle prices, and includes residual bad-debt metrics.
-   *
-   * Wrapped in RepeatableRead so the position list and any sub-queries see
-   * the same consistent snapshot without acquiring write locks.
+   * A wallet that has never touched VeilLend still gets a 200 with an empty
+   * `protocol` section as long as it resolves on Horizon; only a wallet that
+   * resolves nowhere (bad/unfunded address, no indexed positions) is 404.
    */
-  async getPortfolio(
-    walletAddress: string,
-    options: { allowStale?: boolean } = {},
-  ): Promise<PortfolioResponseDto> {
-    return this.prisma.withRepeatableRead(async (db) => {
-      const user = await db.user.findUnique({
-        where: { walletAddress },
-      });
+  async getPortfolio(walletAddress: string): Promise<PortfolioResponseDto> {
+    const [horizonResult, veillend] = await Promise.all([
+      this.stellarAccountService.lookupAccountHorizon(walletAddress),
+      this.portfoliosRepository.getVeilLendPortfolio(walletAddress),
+    ]);
 
-      if (!user) {
-        throw new NotFoundException(
-          `No indexed data found for wallet ${walletAddress}`,
-        );
-      }
+    const hasPositions =
+      'positions' in veillend && veillend.positions.length > 0;
 
-      const positions = await db.position.findMany({
-        where: { userId: user.id },
-        include: { asset: true },
-      });
+    if (!horizonResult.success && !hasPositions) {
+      throw new NotFoundException(
+        `No account found for wallet ${walletAddress}`,
+      );
+    }
 
-      // Sum residual bad debt if recorded for user
-      let badDebtUsd = 0;
-      try {
-        const liquidationEvents = await db.transactionHistory.findMany({
-          where: {
-            userId: user.id,
-            type: 'LIQUIDATION',
-          },
-        });
-        for (const ev of liquidationEvents) {
-          const anyEv = ev as Record<string, unknown>;
-          if (anyEv.badDebtUsd && typeof anyEv.badDebtUsd === 'number') {
-            badDebtUsd += anyEv.badDebtUsd;
-          }
+    if (!horizonResult.success) {
+      this.logger.warn(
+        `Horizon lookup failed for ${walletAddress}, returning empty balances: ${horizonResult.error?.message}`,
+      );
+    }
+
+    const balances = horizonResult.success
+      ? mapHorizonBalances(horizonResult.data!.balances)
+      : [];
+    const balance = balances.find((b) => b.assetCode === 'XLM')?.balance ?? 0;
+
+    const collateralValue = hasPositions ? veillend.collateralValue : 0;
+    const borrowedValue = hasPositions ? veillend.borrowedValue : 0;
+    const minCollateralRatioBps =
+      this.protocolService.getMinCollateralRatioBps();
+
+    const { healthFactor, availableToBorrow } = computeVeilLendHealth(
+      collateralValue,
+      borrowedValue,
+      minCollateralRatioBps,
+    );
+
+    const depositedAssets: ProtocolAssetPositionDto[] = [];
+    const borrowedAssets: ProtocolAssetPositionDto[] = [];
+    if (hasPositions) {
+      for (const p of veillend.positions) {
+        if (p.depositedRaw > 0n) {
+          depositedAssets.push(
+            toAssetPositionDto(p, p.depositedRaw, p.depositedUsd),
+          );
         }
-      } catch {
-        badDebtUsd = 0;
+        if (p.borrowedRaw > 0n) {
+          borrowedAssets.push(
+            toAssetPositionDto(p, p.borrowedRaw, p.borrowedUsd),
+          );
+        }
       }
+    }
 
-      const positionSummaries: PositionSummaryDto[] = positions.map((p) => {
-        const depositedUsd = Number(p.depositedUsd);
-        const borrowedUsd = Number(p.borrowedUsd);
+    this.logger.debug(
+      `Portfolio computed for ${walletAddress}: ${balances.length} balance(s), ${depositedAssets.length} deposit(s), ${borrowedAssets.length} borrow(s), HF=${healthFactor}`,
+    );
 
-        return {
-          assetId: p.assetId,
-          assetCode: p.asset.code,
-          assetSymbol: p.asset.symbol,
-          deposited: formatRawAmount(p.depositedRaw, p.asset.decimals),
-          borrowed: formatRawAmount(p.borrowedRaw, p.asset.decimals),
-          depositedUsd,
-          borrowedUsd,
-          minCollateralRatio: p.asset.minCollateralRatio ?? null,
-          healthFactor: p.healthFactor === null ? null : Number(p.healthFactor),
-          privacyMode: p.privacyMode,
-          isStale: p.isStale,
-        };
-      });
-
-      // Authoritative health factor calculation
-      const hfResult = computeHealthFactor(
-        positions.map((p) => ({
-          assetId: p.assetId,
-          assetCode: p.asset.code,
-          depositedUsd: Number(p.depositedUsd),
-          borrowedUsd: Number(p.borrowedUsd),
-          asset: {
-            code: p.asset.code,
-            minCollateralRatio: p.asset.minCollateralRatio,
-          },
-          isStale: p.isStale,
-        })),
-        {},
-        {},
-        {
-          allowStale: options.allowStale,
-          badDebtUsd,
-        },
-      );
-
-      this.logger.debug(
-        `Portfolio computed for ${walletAddress}: ${positionSummaries.length} position(s), HF=${hfResult.healthFactor}`,
-      );
-
-      return {
-        walletAddress,
-        collateralValue: hfResult.totalCollateralUsd,
-        borrowedValue: hfResult.totalBorrowedUsd,
-        availableToBorrow: hfResult.availableToBorrow,
-        healthFactor: hfResult.healthFactor,
-        hfExBadDebt: hfResult.hfExBadDebt,
-        hfWithBadDebt: hfResult.hfWithBadDebt,
-        badDebtUsd: hfResult.badDebtUsd,
-        isStale: hfResult.isStale,
-        stalePrices: hfResult.stalePrices,
-        missingPrices: hfResult.missingPrices,
-        positions: positionSummaries,
-      };
-    });
+    return {
+      walletAddress,
+      balance,
+      balances,
+      collateralValue,
+      borrowedValue,
+      availableToBorrow,
+      healthFactor,
+      protocol: {
+        depositedAssets,
+        borrowedAssets,
+        collateralValue,
+        borrowedValue,
+        healthFactor,
+        availableToBorrow,
+        minCollateralRatioBps,
+      },
+    };
   }
 
   /**

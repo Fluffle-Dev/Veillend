@@ -86,6 +86,15 @@ export class ProtocolService {
     this.logger.debug('Protocol config cache invalidated');
   }
 
+  /**
+   * Protocol-wide minimum collateral ratio in basis points (e.g. 12500 =
+   * 125%), used by portfolio health-factor math. Per-asset overrides live on
+   * `Asset.minCollateralRatio`; this is the fallback for the aggregate view.
+   */
+  getMinCollateralRatioBps(): number {
+    return Math.round(DEFAULT_RISK_PARAMETERS.minCollateralRatio * 10_000);
+  }
+
   private buildNetworkConfig(): NetworkConfigDto {
     const stellar = this.appConfig.stellar;
     const indexer = this.appConfig.indexer;
