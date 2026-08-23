@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { Suspense } from 'react';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { Container, Flex, Grid, Section } from '@/components/Layout';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -86,10 +86,15 @@ export default async function DashboardPage() {
   // independently while React cache deduplicates the backend work.
   preloadDashboardData(walletAddress);
 
+  // Set by proxy.ts on every request; required so this inline script is
+  // allowed under the nonce-based CSP script-src.
+  const nonce = (await headers()).get('x-nonce') ?? undefined;
+
   return (
     <main className="min-h-screen bg-background">
       <script
         type="application/ld+json"
+        nonce={nonce}
         dangerouslySetInnerHTML={{
           __html: JSON.stringify(structuredData).replace(/</g, '\\u003c'),
         }}
